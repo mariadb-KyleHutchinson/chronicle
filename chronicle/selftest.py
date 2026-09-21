@@ -178,6 +178,33 @@ def build_corpus(root):
     ]
     open(os.path.join(d8, "sess-h.jsonl"), "w").write(
         "\n".join(json.dumps(r) for r in rows) + "\n")
+
+    # sessions I/J — the issue #1 repro: two projects under a container name
+    # ("workspaces") that CONTAINERS does not know about, so file_root()
+    # truncates both down to the same shallow "/Users/x/workspaces" bucket.
+    # Session J's own cwd is proj-b's real root, so once fold_known_roots()
+    # runs, session I's cross-repo edit to a file under proj-b should resolve
+    # to proj-b directly -- zero aliases.json entries required.
+    d9 = os.path.join(src, "-Users-x-workspaces-proj-a"); os.makedirs(d9, exist_ok=True)
+    rows = [
+        _user(_ts(b, 0), "wire proj-a's client against the shared proj-b helper",
+              "/Users/x/workspaces/proj-a"),
+        _asst(_ts(b, 1), "Done.", [
+            ("Edit", {"file_path": "/Users/x/workspaces/proj-a/client.py"}),
+            ("Edit", {"file_path": "/Users/x/workspaces/proj-b/shared.py"})]),
+    ]
+    open(os.path.join(d9, "sess-i.jsonl"), "w").write(
+        "\n".join(json.dumps(r) for r in rows) + "\n")
+
+    d10 = os.path.join(src, "-Users-x-workspaces-proj-b"); os.makedirs(d10, exist_ok=True)
+    rows = [
+        _user(_ts(b, 0), "add a health check to proj-b's shared helper",
+              "/Users/x/workspaces/proj-b"),
+        _asst(_ts(b, 1), "Added.", [
+            ("Edit", {"file_path": "/Users/x/workspaces/proj-b/shared.py"})]),
+    ]
+    open(os.path.join(d10, "sess-j.jsonl"), "w").write(
+        "\n".join(json.dumps(r) for r in rows) + "\n")
     return src
 
 
@@ -313,6 +340,21 @@ def run(verbose=False):
                 "SELECT root FROM episode_projects WHERE source='files'")}
             assert any("proj-b" in x for x in roots), f"cross-repo edit lost: {roots}"
         s.check("work is attributed to the repo it edited", cross)
+
+        def known_root_cross_project():
+            rows = q(
+                "SELECT ep.project_id, ep.root FROM episode_projects ep "
+                "JOIN episodes e ON e.id = ep.episode_id "
+                "WHERE ep.source='files' AND e.session_id='sess-i'")
+            shared = [r for r in rows if "proj-b/shared.py" in r["root"]]
+            assert shared, f"cross-repo file row missing entirely: {rows}"
+            assert all(r["project_id"] == "proj-b" for r in shared), (
+                f"cross-repo file wasn't folded to its known cwd root: {shared}")
+            assert not any(r["project_id"] == "workspaces" for r in rows), (
+                f"a file collapsed into the shared truncated bucket instead of "
+                f"its real project: {rows}")
+        s.check("known session cwd wins over file_root() truncation, no aliases needed",
+                known_root_cross_project)
 
         def agent():
             rows = q("SELECT prompt, result FROM agent_runs")
@@ -715,6 +757,34 @@ def run(verbose=False):
             assert "hunter2secret" not in out["description"], out["description"]
             assert out["status"] == "pending", "scrubbing dropped a field"
         s.check("checkpoints redact task text as well as prompts", checkpoint_scrubs_tasks)
+
+        def custom_containers_configure():
+            """A `containers` list in aliases.json overrides the hardcoded
+            default, so file_root() can resolve a container name (e.g. a
+            machine-specific folder like `oss-repos`) the built-in guess
+            would never know about."""
+            import pathlib
+            from . import config, ingest
+            tmp = tempfile.mkdtemp(prefix="chronicle-containers-")
+            try:
+                pathlib.Path(tmp, "aliases.json").write_text(
+                    json.dumps({"containers": ["weirdcontainer"]}))
+                saved = config.ALIASES_PATH
+                config.ALIASES_PATH = pathlib.Path(tmp, "aliases.json")
+                try:
+                    got = config.load_containers()
+                    assert "weirdcontainer" in got, f"custom containers not loaded: {got}"
+                    assert "dev" not in got, \
+                        "a configured containers list should replace the default, not extend it"
+                    root = ingest.file_root("/Users/x/weirdcontainer/proj-z/main.py")
+                    assert root == "/Users/x/weirdcontainer/proj-z", \
+                        f"a container name outside the hardcoded default failed to resolve: {root}"
+                finally:
+                    config.ALIASES_PATH = saved
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+        s.check("a configured `containers` entry resolves a container name the default misses",
+                custom_containers_configure)
 
         def isolation():
             real = os.path.expanduser("~/.chronicle/chronicle.db")

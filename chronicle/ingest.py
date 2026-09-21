@@ -1,27 +1,29 @@
 import os, re, json, glob, html, datetime, collections, pathlib
 from .config import (SOURCE, GAP_SECONDS, MAX_USER_TEXT, MAX_ASST_TEXT,
-                     MAX_BODY, load_aliases)
+                     MAX_BODY, load_aliases, load_containers)
 from .redact import scrub
 from . import shellwrite
 
 MUTATORS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 # work continuing after the last prompt still belongs to the episode, but only for a while
 TAIL_GRACE = 2 * 3600
-# a repo lives one level below these; they are containers, not projects
-CONTAINERS = {"dev", "Documents", "Downloads", "Desktop", "Projects",
-              "code", "work", "repos", "src", "sites", "apps",
-              "github", "customers", "oss-repos", "personal-repos", "review-repos"}
 
 
-def file_root(path):
-    """The repo/project root a touched file belongs to."""
+def file_root(path, containers=None):
+    """The repo/project root a touched file belongs to.
+
+    `containers` defaults to the configured set (aliases.json's `containers`
+    key, falling back to config.DEFAULT_CONTAINERS) — pass it explicitly only
+    to avoid re-reading aliases.json across many calls."""
     if not path or not path.startswith("/"):
         return None
+    if containers is None:
+        containers = load_containers()
     s = path.split("/")
     if len(s) < 4 or s[1] != "Users":
         return "/".join(s[:3]) or None
     i = 3
-    while i < len(s) - 1 and s[i] in CONTAINERS:
+    while i < len(s) - 1 and s[i] in containers:
         i += 1
     return "/".join(s[: i + 1])
 AGENT_TOOLS = {"Task", "Agent"}
