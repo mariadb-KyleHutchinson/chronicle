@@ -78,6 +78,16 @@ def build(con, rebuild=False, verbose=True, progress=None):
         stats["sessions"] += 1
 
         eps = ingest.segment(s["events"])
+        if not eps and s.get("commands") and s["events"]:
+            # a command-only session (no substantive prompt ever anchors an episode)
+            # would otherwise drop its command tally on the floor entirely
+            eps = [{"seq": 1, "started": s["events"][0][0], "ended": s["events"][-1][0],
+                    "prompts": [], "asst": [], "tools": collections.Counter(),
+                    "files": set(), "agents": 0, "compactions": s["compactions"],
+                    "out_tokens": s["out_tokens"], "cache_read": s["cache_read"],
+                    "in_tokens": s["in_tokens"], "cache_write": s["cache_write"]}]
+        if eps and s.get("commands"):
+            eps[0]["tools"].update({f"cmd:/{k}": v for k, v in s["commands"].items()})
         spans = []
         for ep in eps:
             title = ingest.episode_title(ep, s["title"])
@@ -172,6 +182,14 @@ def build(con, rebuild=False, verbose=True, progress=None):
         con.execute("DELETE FROM agents_fts WHERE rowid=?", (aid,))
         con.execute("INSERT INTO agents_fts (rowid,prompt,result) VALUES (?,?,?)",
                     (aid, prompt, result))
+        if eid and a.get("tools"):
+            cur = con.execute("SELECT tools FROM episodes WHERE id=?", (eid,)).fetchone()
+            if cur:
+                merged = json.loads(cur["tools"] or "{}")
+                for k, v in a["tools"].items():
+                    merged[f"sub:{k}"] = merged.get(f"sub:{k}", 0) + v
+                con.execute("UPDATE episodes SET tools=?, n_tools=? WHERE id=?",
+                            (json.dumps(merged), sum(merged.values()), eid))
         con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?,?,?)",
                     (path, st.st_size, st.st_mtime, sid, "agent",
                      datetime.datetime.now().isoformat(timespec="seconds")))

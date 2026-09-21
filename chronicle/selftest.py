@@ -56,7 +56,8 @@ def build_corpus(root):
         _asst(_ts(b, 11), "Done.", [("Edit", {"file_path": "/Users/x/proj-b/dashboard.tsx"})]),
         # 6 hours later -> a second episode
         _user(_ts(b, 370), "the recurring billing cron is firing twice, please investigate"),
-        _asst(_ts(b, 371), "Found it.", [("Edit", {"file_path": "/Users/x/proj-a/cron.py"})]),
+        _asst(_ts(b, 371), "Found it.", [("Edit", {"file_path": "/Users/x/proj-a/cron.py"}),
+                                          ("Skill", {"skill": "ripwire-find-bug"})]),
         # harness machinery must not create an episode or become a title
         {"type": "user", "timestamp": _ts(b, 1200),
          "message": {"role": "user", "content": "<task-notification>\n<task-id>abc</task-id>\n</task-notification>"}},
@@ -83,7 +84,9 @@ def build_corpus(root):
          "message": {"role": "user", "content": "Investigate the deployment pipeline thoroughly"}},
         {"type": "assistant", "timestamp": _ts(b, 8), "isSidechain": True,
          "message": {"role": "assistant", "usage": {"output_tokens": 500},
-                     "content": [{"type": "text", "text": "The pipeline uses blue-green deploys."}]}},
+                     "content": [{"type": "text", "text": "The pipeline uses blue-green deploys."},
+                                 {"type": "tool_use", "id": "t1", "name": "Bash",
+                                  "input": {"command": "kubectl get pods"}}]}},
     ]
     open(os.path.join(sub, "agent-1.jsonl"), "w").write(
         "\n".join(json.dumps(r) for r in arows) + "\n")
@@ -159,6 +162,21 @@ def build_corpus(root):
         _asst(_ts(b, 32), "Reconciled.", [("Edit", {"file_path": "/Users/x/proj-f/ledger.py"})]),
     ]
     open(os.path.join(d7, "sess-g.jsonl"), "w").write(
+        "\n".join(json.dumps(r) for r in rows) + "\n")
+
+    # session H — a slash command with no other prompt at all. MACHINERY_RX
+    # keeps it out of segment()'s episode bounds, so without the command-only
+    # fallback in indexer.build this session would produce zero episodes and
+    # the command tally would be dropped on the floor.
+    d8 = os.path.join(src, "-Users-x-proj-g"); os.makedirs(d8, exist_ok=True)
+    rows = [
+        _user(_ts(b, 0),
+              "<command-message>graphify is running</command-message>\n"
+              "<command-name>/graphify</command-name>\n"
+              "<command-args></command-args>",
+              "/Users/x/proj-g"),
+    ]
+    open(os.path.join(d8, "sess-h.jsonl"), "w").write(
         "\n".join(json.dumps(r) for r in rows) + "\n")
     return src
 
@@ -302,6 +320,29 @@ def run(verbose=False):
             assert "deployment pipeline" in rows[0]["prompt"], "agent prompt lost"
             assert "blue-green" in rows[0]["result"], "agent conclusion lost"
         s.check("subagent transcripts are captured", agent)
+
+        def skill_counted_once():
+            row = q("SELECT tools FROM episodes WHERE session_id='sess-a' AND seq=2")[0]
+            tools = json.loads(row["tools"] or "{}")
+            assert tools.get("skill:ripwire-find-bug") == 1, f"skill call not tallied: {tools}"
+            assert "Skill" not in tools, f"skill call double-counted under the bare name: {tools}"
+        s.check("a Skill call is tallied once, not twice", skill_counted_once)
+
+        def sub_merge_updates_n_tools():
+            row = q("SELECT tools, n_tools FROM episodes WHERE session_id='sess-b'")[0]
+            tools = json.loads(row["tools"] or "{}")
+            assert tools.get("sub:Bash") == 1, f"subagent tool call not merged: {tools}"
+            assert row["n_tools"] == sum(tools.values()), (
+                f"n_tools ({row['n_tools']}) drifted from the merged tools tally "
+                f"({sum(tools.values())})")
+        s.check("a subagent's tools merge in and n_tools stays consistent", sub_merge_updates_n_tools)
+
+        def command_only_session():
+            rows = q("SELECT tools FROM episodes WHERE session_id='sess-h'")
+            assert rows, "a command-only session produced no episode at all"
+            tools = json.loads(rows[0]["tools"] or "{}")
+            assert tools.get("cmd:/graphify") == 1, f"slash command not tallied: {tools}"
+        s.check("a command-only session still tallies its slash command", command_only_session)
 
         def compaction():
             n = q("SELECT SUM(compactions) n FROM episodes")[0]["n"] or 0
