@@ -74,6 +74,10 @@ def build(con, rebuild=False, verbose=True, progress=None):
 
         con.execute("DELETE FROM messages WHERE session_id=?", (sid,))
         con.execute("DELETE FROM episodes WHERE session_id=?", (sid,))
+        # a re-index rewrites these rows from scratch; left in place, a row that
+        # fold_known_roots() already moved collides with its unfolded twin
+        con.execute("DELETE FROM episode_projects WHERE episode_id IN "
+                    "(SELECT id FROM episode_ids WHERE session_id=?)", (sid,))
         con.execute("INSERT OR REPLACE INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
             sid, pid, ppath, s["branch"], s["title"],
             _iso(s["events"][0][0]) if s["events"] else None,
@@ -304,7 +308,7 @@ def fold_known_roots(con):
         target, _ = _longest_prefix_match(row["root"], known)
         if target and target != row["project_id"]:
             con.execute(
-                "UPDATE episode_projects SET project_id=? "
+                "UPDATE OR REPLACE episode_projects SET project_id=? "
                 "WHERE episode_id=? AND project_id=? AND root=?",
                 (target, row["episode_id"], row["project_id"], row["root"]))
             merged[row["project_id"]].add(target)

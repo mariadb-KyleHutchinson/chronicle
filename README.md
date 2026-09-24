@@ -246,7 +246,7 @@ One SQLite file at `~/.chronicle/chronicle.db` — 11 MB for 500 MB of transcrip
 |---|---|
 | `index [--rebuild]` | Ingest new or changed sessions. Incremental and idempotent. |
 | `doctor` | Check *this* install: environment, index, hooks, MCP, redaction. 24 checks. |
-| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 88 checks. |
+| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 89 checks. |
 | `stats` | Corpus overview. |
 | `tokens [--by project\|day\|month]` | Every token spent, split into input, cache write, cache read and output. |
 | `projects` | Every project, most recently worked first. |
@@ -409,7 +409,7 @@ Issues and pull requests welcome. Two rules that are not negotiable:
 Before opening a PR:
 
 ```bash
-chronicle selftest                        # 88 checks, ~16s, sandboxed
+chronicle selftest                        # 89 checks, ~16s, sandboxed
 python3.11 -m py_compile chronicle/*.py   # the supported floor
 ```
 

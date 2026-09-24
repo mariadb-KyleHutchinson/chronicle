@@ -414,6 +414,22 @@ def run(verbose=False):
             assert not moved, f"episode ids moved across rebuild: {moved}"
         s.check("ids survive a rebuild", stable)
 
+        def reindex_keeps_attribution():
+            # a live session grows, so its file is re-read by a plain index
+            sql = "SELECT episode_id, project_id, source, n_files, root FROM episode_projects"
+            before = sorted(map(tuple, q(sql)))
+            folded = q("SELECT COUNT(*) n FROM episode_projects WHERE source='files'")[0]["n"]
+            assert folded, "corpus has no file attribution to re-index"
+            for dirpath, _, names in os.walk(src):
+                for n in names:
+                    if n.endswith(".jsonl") and "subagents" not in dirpath:
+                        with open(os.path.join(dirpath, n), "a") as fh:
+                            fh.write(json.dumps({"type": "file-history-snapshot"}) + "\n")
+            run_cli(env, "index")
+            after = sorted(map(tuple, q(sql)))
+            assert after == before, f"attribution changed on re-index: {set(before) ^ set(after)}"
+        s.check("re-indexing a grown session keeps its attribution", reindex_keeps_attribution)
+
         # ---- every subcommand runs
         def _first(sql, what):
             rows = q(sql)
