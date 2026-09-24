@@ -33,7 +33,7 @@ DEFAULT_IGNORE = ["/private/tmp", "/tmp", "/var/folders",
 # a repo lives one level below these; they are containers, not projects
 DEFAULT_CONTAINERS = {"dev", "Documents", "Downloads", "Desktop", "Projects",
                       "code", "work", "repos", "src", "sites", "apps",
-                      "github", "customers", "oss-repos", "personal-repos", "review-repos"}
+                      "github"}
 
 
 def _load_aliases_key(key, default):
