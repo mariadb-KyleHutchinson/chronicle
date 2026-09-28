@@ -1,5 +1,5 @@
 import os, json, time, datetime, collections
-from .config import SOURCE, load_aliases, load_ignore_roots
+from .config import SOURCE, load_aliases, load_ignore_roots, load_containers
 from . import ingest, db
 from .redact import scrub
 
@@ -266,11 +266,26 @@ def _merge_project_paths(con, src, dst):
                     (json.dumps(merged_paths), dst))
 
 
+def _is_container_dir(path, containers):
+    """Is `path` a folder that holds projects rather than being one?
+
+    A session started in `~` or `~/github` still belongs to some project, but
+    the folder can't be a root other sessions fold into — or every repo below
+    it ends up in one project."""
+    parts = path.rstrip("/").split("/")
+    if len(parts) <= (3 if parts[1:2] == ["Users"] else 2):
+        return True
+    return parts[-1] in containers
+
+
 def fold_descendants(con):
     """A session run in <project>/subdir is the same project, not a new one."""
+    containers = load_containers()
     rows = con.execute("SELECT id,cwd FROM sessions WHERE cwd IS NOT NULL").fetchall()
     roots = {}
     for r in rows:
+        if _is_container_dir(r["cwd"], containers):
+            continue
         pid = con.execute("SELECT project_id FROM sessions WHERE id=?", (r["id"],)).fetchone()["project_id"]
         roots.setdefault(r["cwd"], pid)
     merged = {}
@@ -297,9 +312,11 @@ def fold_known_roots(con):
     written `episode_projects` rows, and after `fold_descendants()` has
     canonicalized descendant sessions' project ids.
     """
+    containers = load_containers()
     known = {}
     for r in con.execute("SELECT DISTINCT cwd, project_id FROM sessions WHERE cwd IS NOT NULL"):
-        known.setdefault(r["cwd"], r["project_id"])
+        if not _is_container_dir(r["cwd"], containers):
+            known.setdefault(r["cwd"], r["project_id"])
     rows = con.execute(
         "SELECT episode_id, project_id, root FROM episode_projects WHERE source='files'"
     ).fetchall()

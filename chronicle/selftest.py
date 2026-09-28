@@ -999,6 +999,45 @@ def run(verbose=False):
         s.check("fold_descendants and fold_known_roots don't fight each other",
                 fold_descendants_and_known_roots_agree)
 
+        def container_session_is_not_a_fold_root():
+            """A session started in ~/github (a container) must not swallow
+            every repo below it: the repo session keeps its own project, and
+            a file it touches in a sibling repo isn't pulled up either."""
+            bp = datetime.datetime(2026, 1, 9, 9, 0)
+            dirs = []
+            def sess(dirname, sid, cwd, tools=()):
+                d = os.path.join(src, dirname)
+                os.makedirs(d, exist_ok=True)
+                dirs.append(d)
+                rows = [_user(_ts(bp, 0), f"work in {cwd}", cwd)]
+                if tools:
+                    rows.append(_asst(_ts(bp, 1), "Done.", list(tools)))
+                open(os.path.join(d, sid + ".jsonl"), "w").write(
+                    "\n".join(json.dumps(r) for r in rows) + "\n")
+            sess("-Users-x-github", "sess-cont-top", "/Users/x/github")
+            sess("-Users-x-github-repoone", "sess-cont-one", "/Users/x/github/repoone",
+                 [("Edit", {"file_path": "/Users/x/github/repotwo/shared.py"})])
+            sess("-Users-x-github-repotwo", "sess-cont-two", "/Users/x/github/repotwo")
+            try:
+                _reindex_with_aliases(None)
+                pid = {r["id"]: r["project_id"] for r in q(
+                    "SELECT id, project_id FROM sessions WHERE id LIKE 'sess-cont-%'")}
+                assert pid["sess-cont-one"] != pid["sess-cont-top"], (
+                    f"a repo session folded into its container's project: {pid}")
+                assert pid["sess-cont-two"] != pid["sess-cont-top"], (
+                    f"a repo session folded into its container's project: {pid}")
+                frows = q("SELECT project_id FROM episode_projects WHERE source='files' "
+                          "AND root LIKE '%github/repotwo/shared.py'")
+                assert frows and all(r["project_id"] == pid["sess-cont-two"] for r in frows), (
+                    f"a sibling-repo file went to the wrong project: {frows} (want "
+                    f"{pid['sess-cont-two']!r})")
+            finally:
+                _reindex_with_aliases(None)
+                for d in dirs:
+                    shutil.rmtree(d, ignore_errors=True)
+        s.check("a session in a container folder isn't a fold root",
+                container_session_is_not_a_fold_root)
+
         def custom_containers_reach_a_label_alias():
             """A configured `containers` list (Task 2) combined with a
             `labels` alias entry keyed by the resulting project id: reachable
