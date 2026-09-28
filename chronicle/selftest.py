@@ -700,6 +700,21 @@ def run(verbose=False):
         def isolation():
             real = os.path.expanduser("~/.chronicle/chronicle.db")
             assert os.path.realpath(db) != os.path.realpath(real), "selftest used the real index"
+            # `chronicle selftest` itself must not open the index it was started
+            # against: point it at an empty root, stub out the suite, and check
+            # no chronicle.db appeared there
+            iroot = os.path.join(sandbox, "isolation-root")
+            os.makedirs(iroot)
+            r = subprocess.run(
+                [sys.executable, "-c",
+                 "from chronicle import cli, selftest\n"
+                 "selftest.run = lambda verbose=False: selftest.Suite()\n"
+                 "cli.main(['selftest'])"],
+                env={**env, "CHRONICLE_ROOT": iroot, "PYTHONPATH": str(INSTALL_DIR)},
+                cwd=str(INSTALL_DIR), capture_output=True, text=True, timeout=30)
+            assert r.returncode == 0, f"stubbed selftest exited {r.returncode}: {r.stderr[-300:]}"
+            assert not os.path.exists(os.path.join(iroot, "chronicle.db")), (
+                "`chronicle selftest` opened the index it was started against")
         s.check("the real index was never touched", isolation)
       except Exception:
         # the harness itself must never die silently

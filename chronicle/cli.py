@@ -620,7 +620,8 @@ def main(argv=None):
 
     x = sub.add_parser("selftest", help="run the full suite against a synthetic corpus")
     x.add_argument("-v", "--verbose", action="store_true", help="list passing checks too")
-    x.set_defaults(fn=cmd_selftest)
+    # never opens the real index: connect() alone creates and migrates it
+    x.set_defaults(fn=cmd_selftest, needs_db=False)
 
     x = sub.add_parser("doctor", help="check that the whole install is working")
     x.set_defaults(fn=cmd_doctor)
@@ -667,7 +668,7 @@ def main(argv=None):
         return hooks.run(a.event)
     if not getattr(a, "fn", None):
         p.print_help(); return 0
-    con = db.connect()
+    con = db.connect() if getattr(a, "needs_db", True) else None
     return a.fn(con, a) or 0
 
 
