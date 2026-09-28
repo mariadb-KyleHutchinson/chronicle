@@ -525,6 +525,25 @@ def run(verbose=False):
                 "brief was lost when the writer held the pipe open"
         s.check("brief still delivered with stdin held open", brief_survives_open_pipe)
 
+        def detached_errors_are_logged():
+            # a hook's background index used to send stderr to /dev/null, so a
+            # crash there left no trace; it now lands in indexer.log
+            logroot = os.path.join(sandbox, "detach-root")
+            os.makedirs(logroot)
+            denv = {**env, "CHRONICLE_ROOT": logroot, "CHRONICLE_MEMORY": str(INSTALL_DIR),
+                    "PYTHONPATH": str(INSTALL_DIR)}
+            subprocess.run([sys.executable, "-c",
+                            "from chronicle import hooks; hooks._detach(['no-such-command'])"],
+                           env=denv, cwd=str(INSTALL_DIR), timeout=30, check=True)
+            log = os.path.join(logroot, "indexer.log")
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                if os.path.exists(log) and "no-such-command" in open(log).read():
+                    return
+                time.sleep(0.1)
+            raise AssertionError("a failing detached run left nothing in indexer.log")
+        s.check("a detached run's errors reach indexer.log", detached_errors_are_logged)
+
         # ---- MCP
         def mcp():
             p = subprocess.Popen([sys.executable, "-m", "chronicle.mcp"], cwd=str(INSTALL_DIR),

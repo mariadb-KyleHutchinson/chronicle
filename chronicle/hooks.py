@@ -23,13 +23,16 @@ def _save_state(d):
 
 
 def _detach(args):
-    """Run work in the background; the session must never wait on us."""
+    """Run work in the background; the session must never wait on us.
+    stderr goes to indexer.log, the same file the launchd indexer writes to,
+    so a crash in a detached run is on record instead of vanishing."""
     try:
-        subprocess.Popen(
-            [sys.executable, "-m", "chronicle.cli"] + args,
-            cwd=str(MEMORY_DIR), start_new_session=True,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            env={**os.environ, "PYTHONPATH": str(MEMORY_DIR)})
+        with open(ROOT / "indexer.log", "a") as log:
+            subprocess.Popen(
+                [sys.executable, "-m", "chronicle.cli"] + args,
+                cwd=str(MEMORY_DIR), start_new_session=True,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log,
+                env={**os.environ, "PYTHONPATH": str(MEMORY_DIR)})
     except Exception:
         pass
 
