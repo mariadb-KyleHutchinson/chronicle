@@ -244,9 +244,9 @@ One SQLite file at `~/.chronicle/chronicle.db` — 11 MB for 500 MB of transcrip
 
 | Command | What it does |
 |---|---|
-| `index [--rebuild]` | Ingest new or changed sessions. Incremental and idempotent. |
+| `index [--rebuild \| --reattribute]` | Ingest new or changed sessions. Incremental and idempotent. `--reattribute` re-runs project attribution on the existing index without re-reading transcripts; ids don't change. |
 | `doctor` | Check *this* install: environment, index, hooks, MCP, redaction. 24 checks. |
-| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 90 checks. |
+| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 91 checks. |
 | `stats` | Corpus overview. |
 | `tokens [--by project\|day\|month]` | Every token spent, split into input, cache write, cache read and output. |
 | `projects` | Every project, most recently worked first. |
@@ -331,7 +331,7 @@ Copy `aliases.example.json` to `aliases.json` to tell Chronicle that several dir
 
 `containers` is optional and only matters as a last resort, when a file can't be resolved from a known session root or from `projects` above (see [A project is not a directory](#2-a-project-is-not-a-directory)). It lists folder names that hold repos rather than being one — a repo sits one level below them. Setting it replaces the built-in list entirely, so include every name you rely on.
 
-Then `./chronicle-cli index --rebuild`. Run `chronicle map --cross` to find directories still landing on the wrong project.
+Then `./chronicle-cli index --reattribute` (seconds, reads no transcripts). Run `chronicle map --cross` to find directories still landing on the wrong project.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -409,7 +409,7 @@ Issues and pull requests welcome. Two rules that are not negotiable:
 Before opening a PR:
 
 ```bash
-chronicle selftest                        # 90 checks, ~16s, sandboxed
+chronicle selftest                        # 91 checks, ~16s, sandboxed
 python3.11 -m py_compile chronicle/*.py   # the supported floor
 ```
 

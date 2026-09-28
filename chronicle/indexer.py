@@ -239,6 +239,63 @@ def build(con, rebuild=False, verbose=True, progress=None):
     return stats
 
 
+def reattribute(con):
+    """Re-run project attribution over what the index already holds, reading
+    no transcript: after an aliases.json edit, or to undo a fold an older
+    chronicle got wrong. Only project ids move — episode and agent ids don't."""
+    alias_paths, labels = load_aliases()
+    ignore = load_ignore_roots()
+    before = {r["id"]: r["project_id"] for r in con.execute("SELECT id, project_id FROM sessions")}
+    n_projects = con.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+    proj_paths = collections.defaultdict(set)
+    for r in con.execute("SELECT id, cwd FROM sessions WHERE cwd IS NOT NULL").fetchall():
+        pid, _, ppath = resolve_project(r["cwd"], None, alias_paths, labels)
+        proj_paths[pid].add(ppath)
+        con.execute("UPDATE sessions SET project_id=? WHERE id=?", (pid, r["id"]))
+        for t in ("episodes", "agent_runs"):
+            con.execute(f"UPDATE {t} SET project_id=? WHERE session_id=?", (pid, r["id"]))
+
+    # episode_projects is rewritten the way build() writes it; rows whose
+    # episode has no session are left alone
+    owner = {r["id"]: (r["project_id"], r["cwd"]) for r in con.execute(
+        "SELECT e.id, s.project_id, s.cwd FROM episodes e JOIN sessions s ON s.id=e.session_id "
+        "WHERE s.cwd IS NOT NULL")}
+    files = collections.Counter()
+    for r in con.execute("SELECT * FROM episode_projects WHERE source='files'").fetchall():
+        f, eid = r["root"], r["episode_id"]
+        if eid not in owner or any(f == g or f.startswith(g.rstrip("/") + "/") for g in ignore):
+            continue
+        target, prefix = _alias_match(f, alias_paths)
+        if target:
+            files[(eid, target, prefix)] += r["n_files"]
+        elif rt := ingest.file_root(f):
+            files[(eid, resolve_project(rt, None, alias_paths, labels)[0], f)] += r["n_files"]
+    for eid, (pid, cwd) in owner.items():
+        con.execute("DELETE FROM episode_projects WHERE episode_id=?", (eid,))
+        con.execute("INSERT OR REPLACE INTO episode_projects VALUES (?,?,?,?,?)",
+                    (eid, pid, "cwd", 0, cwd))
+    for (eid, pid, root), cnt in files.items():
+        con.execute("INSERT OR REPLACE INTO episode_projects VALUES (?,?,?,?,?)",
+                    (eid, pid, "files", cnt, root))
+        proj_paths[pid].add(root)
+
+    for pid, paths in proj_paths.items():
+        con.execute("INSERT OR REPLACE INTO projects VALUES (?,?,?)",
+                    (pid, labels.get(pid, pid), json.dumps(sorted(paths))))
+    fold_descendants(con)
+    fold_known_roots(con)
+    con.execute(
+        "DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM ("
+        "SELECT project_id FROM sessions UNION SELECT project_id FROM episodes "
+        "UNION SELECT project_id FROM agent_runs UNION SELECT project_id FROM episode_projects"
+        ") WHERE project_id IS NOT NULL)")
+    con.commit()
+    after = {r["id"]: r["project_id"] for r in con.execute("SELECT id, project_id FROM sessions")}
+    return {"sessions": len(after), "moved": sum(before.get(k) != v for k, v in after.items()),
+            "projects_before": n_projects,
+            "projects": con.execute("SELECT COUNT(*) FROM projects").fetchone()[0]}
+
+
 def _longest_prefix_match(path, candidates, exclude_self=False):
     """Longest directory-prefix match of `path` against `candidates` keys.
 

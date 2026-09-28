@@ -1038,6 +1038,65 @@ def run(verbose=False):
         s.check("a session in a container folder isn't a fold root",
                 container_session_is_not_a_fold_root)
 
+        def reattribute_undoes_a_container_fold():
+            """An index an older chronicle folded into a container's project
+            splits back out with `index --reattribute`, to exactly what a
+            fresh build gives, and no episode or agent id moves."""
+            bp = datetime.datetime(2026, 1, 9, 9, 0)
+            dirs = []
+            def sess(dirname, sid, cwd, tools=()):
+                d = os.path.join(src, dirname)
+                os.makedirs(d, exist_ok=True)
+                dirs.append(d)
+                rows = [_user(_ts(bp, 0), f"work in {cwd}", cwd)]
+                if tools:
+                    rows.append(_asst(_ts(bp, 1), "Done.", list(tools)))
+                open(os.path.join(d, sid + ".jsonl"), "w").write(
+                    "\n".join(json.dumps(r) for r in rows) + "\n")
+            sess("-Users-x-github", "sess-reat-top", "/Users/x/github")
+            sess("-Users-x-github-reatone", "sess-reat-one", "/Users/x/github/reatone",
+                 [("Edit", {"file_path": "/Users/x/github/reattwo/shared.py"})])
+            sess("-Users-x-github-reattwo", "sess-reat-two", "/Users/x/github/reattwo")
+            snap_sql = {
+                "sessions": "SELECT id, project_id FROM sessions ORDER BY id",
+                "episodes": "SELECT id, project_id FROM episodes ORDER BY id",
+                "agent_runs": "SELECT id, project_id FROM agent_runs ORDER BY id",
+                "episode_projects": "SELECT * FROM episode_projects "
+                                    "ORDER BY episode_id, project_id, root",
+                "projects": "SELECT * FROM projects ORDER BY id",
+                "ids": "SELECT (SELECT COUNT(*) || ':' || MAX(id) FROM episode_ids), "
+                       "(SELECT COUNT(*) || ':' || MAX(id) FROM agent_ids)"}
+            def snap():
+                return {k: [tuple(r) for r in q(v)] for k, v in snap_sql.items()}
+            try:
+                _reindex_with_aliases(None)
+                want = snap()
+                pid = {r["id"]: r["project_id"] for r in q(
+                    "SELECT id, project_id FROM sessions WHERE id LIKE 'sess-reat-%'")}
+                top = pid["sess-reat-top"]
+                con = sqlite3.connect(db)
+                for o in {pid["sess-reat-one"], pid["sess-reat-two"]}:
+                    for t in ("sessions", "episodes", "agent_runs"):
+                        con.execute(f"UPDATE {t} SET project_id=? WHERE project_id=?", (top, o))
+                    con.execute("UPDATE OR REPLACE episode_projects SET project_id=? "
+                                "WHERE project_id=?", (top, o))
+                    con.execute("DELETE FROM projects WHERE id=?", (o,))
+                con.commit(); con.close()
+                assert snap() != want, "test setup error: the fake old fold changed nothing"
+                out = run_cli(env, "index", "--reattribute")
+                got = snap()
+                for k in snap_sql:
+                    assert got[k] == want[k], (
+                        f"--reattribute left {k} different from a fresh build:\n"
+                        f"  got  {sorted(set(got[k]) - set(want[k]))[:5]}\n"
+                        f"  want {sorted(set(want[k]) - set(got[k]))[:5]}\n{out}")
+            finally:
+                _reindex_with_aliases(None)
+                for d in dirs:
+                    shutil.rmtree(d, ignore_errors=True)
+        s.check("index --reattribute undoes a container fold, ids unchanged",
+                reattribute_undoes_a_container_fold)
+
         def custom_containers_reach_a_label_alias():
             """A configured `containers` list (Task 2) combined with a
             `labels` alias entry keyed by the resulting project id: reachable
