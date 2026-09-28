@@ -13,6 +13,9 @@ import os, sys, json, time, shutil, sqlite3, subprocess, tempfile, datetime, tra
 
 from .config import INSTALL_DIR
 
+# hooks go through `chronicle-cli hook <event>` too — the same command the
+# generated chronicle-hook execs — so a fresh clone or worktree can run this
+# before `install` has written one
 LAUNCHER = str(INSTALL_DIR / "chronicle-cli")
 
 
@@ -203,7 +206,7 @@ def run_hook_openpipe(env, event, payload, limit):
     test exists to catch). Drain the output pipes on threads and wait instead.
     """
     import threading
-    p = subprocess.Popen([str(INSTALL_DIR / "chronicle-hook"), event],
+    p = subprocess.Popen([LAUNCHER, "hook", event],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE, text=True, env=env)
     sink = {}
@@ -238,7 +241,7 @@ def run_hook_openpipe(env, event, payload, limit):
 
 
 def run_hook(env, event, payload):
-    r = subprocess.run([str(INSTALL_DIR / "chronicle-hook"), event],
+    r = subprocess.run([LAUNCHER, "hook", event],
                        input=json.dumps(payload) if isinstance(payload, dict) else payload,
                        capture_output=True, text=True, env=env, timeout=120)
     assert r.returncode == 0, f"hook {event} exited {r.returncode}: {r.stderr[-200:]}"
